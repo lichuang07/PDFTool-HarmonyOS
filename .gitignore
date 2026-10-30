@@ -1,0 +1,30 @@
+# ---------- 鸿蒙构建产物 ----------
+/build
+/.hvigor
+/.cxx
+/.test
+/entry/build
+/entry/.preview
+/entry/.cxx
+/entry/.test
+*.hap
+*.hsp
+*.har
+*.app
+
+# ---------- 依赖目录（由 ohpm 还原） ----------
+/node_modules
+/oh_modules
+
+# ---------- 本机 / IDE ----------
+/local.properties
+/.idea
+/.vscode
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---------- 日志与临时文件 ----------
+*.log
+*.tmp
+/.temp

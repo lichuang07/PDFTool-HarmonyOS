@@ -1,0 +1,13 @@
+# 统一换行符为 LF（跨平台协作）
+* text=auto eol=lf
+
+# 二进制资源不做换行转换与 diff
+*.wasm binary
+*.otf binary
+*.ttf binary
+*.gz binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.hap binary

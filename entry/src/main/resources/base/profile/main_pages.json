@@ -1,0 +1,8 @@
+{
+  "src": [
+    "pages/FileList",
+    "pages/Reader",
+    "pages/EditorPage",
+    "pages/TechVerify"
+  ]
+}

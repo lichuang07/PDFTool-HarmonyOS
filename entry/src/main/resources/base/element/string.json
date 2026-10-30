@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "图文匣 PDF 工具"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "图文匣 PDF 工具主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "图文匣"
+    },
+    {
+      "name": "permission_print_reason",
+      "value": "用于调起系统打印服务打印 PDF 文档"
+    }
+  ]
+}

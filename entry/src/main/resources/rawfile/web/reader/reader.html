@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>PDF 阅读器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #525659; font-family: -apple-system, "HarmonyOS Sans", sans-serif; }
+    #app { display: flex; flex-direction: column; width: 100%; height: 100%; }
+    #toolbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 60;
+      display: flex; align-items: center; gap: 4px; padding: 8px 12px;
+      background: rgba(38,38,40,0.78); color: #eee; flex-shrink: 0; flex-wrap: wrap;
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+      transform: translateY(calc(-1 * var(--collapse, 50px)));
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+    }
+    #toolbar.visible { transform: translateY(0); }
+    /* 搜索开启时：工具栏连同右端小尾巴一起完全移出屏幕顶端，由搜索栏独占顶部 */
+    #toolbar.searching { transform: translateY(calc(-1 * (var(--collapse, 50px) + 30px))); pointer-events: none; }
+    #toolbar.searching #toolbar-handle { display: none; }
+    /* 侧栏（目录/缩略图）打开时：同样让工具栏连同小尾巴完全移出，避免遮挡侧栏顶部条目 */
+    #toolbar.panel-open { transform: translateY(calc(-1 * (var(--collapse, 50px) + 30px))); pointer-events: none; }
+    #toolbar.panel-open #toolbar-handle { display: none; }
+    #toolbar .btn {
+      background: rgba(255,255,255,0.12); color: #f2f2f2; border: none; border-radius: 9px;
+      padding: 7px 11px; font-size: 14px; cursor: pointer; min-width: 36px; height: 34px;
+      display: inline-flex; align-items: center; justify-content: center; user-select: none;
+      transition: background .15s, transform .1s;
+    }
+    #toolbar .btn:active { background: rgba(255,255,255,0.28); transform: scale(0.94); }
+    #toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.18); margin: 0 4px; }
+    #toolbar .spacer { flex: 1; }
+    #page-indicator { font-size: 13px; padding: 4px 8px; color: #ddd; white-space: nowrap; }
+    #page-jump {
+      width: 50px; height: 30px; background: rgba(255,255,255,0.12); color: #eee; border: none;
+      border-radius: 8px; padding: 4px; font-size: 13px; text-align: center; outline: none;
+    }
+    #page-jump::placeholder { color: rgba(255,255,255,0.45); }
+    #toolbar .btn-hide { background: transparent; font-size: 16px; color: #bbb; }
+
+    #body { flex: 1; position: relative; overflow: hidden; }
+    #scroll {
+      position: absolute; inset: 0; overflow: auto; padding: 16px 0;
+      -webkit-overflow-scrolling: touch;
+    }
+    #scroll.single-snap { scroll-snap-type: y mandatory; }
+    #scroll.single-snap .page-wrap { scroll-snap-align: start; }
+    #scroll.double { overflow-x: auto; overflow-y: hidden; }
+    #scroll.double.single-snap { scroll-snap-type: x mandatory; }
+    #scroll.double.single-snap .page-wrap { scroll-snap-align: start; }
+    #pages { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+    #pages.double { flex-direction: row; align-items: center; gap: 12px; padding: 16px; }
+    .page-wrap {
+      position: relative; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      flex-shrink: 0;
+    }
+    .page-wrap.canvas { display: block; }
+    .page-wrap canvas { display: block; }
+    .text-layer {
+      position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+      overflow: hidden; line-height: 1; opacity: 1;
+    }
+    .text-layer > span {
+      position: absolute; color: transparent; white-space: pre; cursor: text;
+      transform-origin: 0% 0%;
+    }
+    .text-layer > span.hl { background: rgba(255, 222, 0, 0.55); color: transparent; border-radius: 2px; }
+    .text-layer > span::selection { background: #8ab4f8; }
+    .page-ph {
+      background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex;
+      align-items: center; justify-content: center; color: #bbb; font-size: 13px;
+    }
+    .overlay {
+      position: absolute; top: 0; bottom: 0; width: 240px; background: #f5f5f5;
+      overflow: auto; z-index: 20; transition: transform .2s; box-shadow: 0 0 12px rgba(0,0,0,0.3);
+    }
+    #panel-left { left: 0; transform: translateX(-100%); }
+    #panel-right { right: 0; transform: translateX(100%); }
+    /* 注意：open 态必须用 ID 级选择器覆盖上面的 translateX，否则类选择器特异性低于 ID，面板永远停在屏幕外 */
+    #panel-left.open, #panel-right.open { transform: translateX(0); }
+    .overlay h3 { font-size: 14px; padding: 12px; border-bottom: 1px solid #e0e0e0; color: #333; }
+    .outline-item { padding: 8px 12px; font-size: 13px; color: #444; cursor: pointer; border-bottom: 1px solid #eee; }
+    .outline-item:active { background: #e8e8e8; }
+    .outline-item.lv1 { padding-left: 12px; }
+    .outline-item.lv2 { padding-left: 26px; }
+    .outline-item.lv3 { padding-left: 40px; }
+    .thumb-item { padding: 8px; text-align: center; border-bottom: 1px solid #eee; cursor: pointer; position: relative; }
+    .thumb-item canvas { border: 1px solid #ddd; background: #fff; max-width: 100%; }
+    .thumb-item.active { background: #d6e4ff; }
+    .thumb-item .tnum { font-size: 11px; color: #888; margin-top: 4px; }
+    .thumb-item.active .tnum { color: #0a7aff; font-weight: bold; }
+    #search-panel {
+      position: absolute; top: 0; left: 0; right: 0; background: rgba(38,38,40,0.82);
+      color: #eee; padding: 10px 12px; display: none; align-items: center; gap: 10px; z-index: 62;
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+    }
+    #search-panel.open { display: flex; }
+    /* 搜索输入框：圆角胶囊 + 放大镜图标 */
+    .s-field { position: relative; flex: 1; display: flex; align-items: center; }
+    .s-field .s-ico { position: absolute; left: 13px; width: 16px; height: 16px; color: rgba(255,255,255,0.55); pointer-events: none; }
+    .s-field input {
+      width: 100%; background: rgba(255,255,255,0.14); color: #eee; border: none;
+      border-radius: 20px; padding: 10px 14px 10px 38px; font-size: 14px; outline: none;
+      transition: background .15s;
+    }
+    .s-field input:focus { background: rgba(255,255,255,0.2); }
+    .s-field input::placeholder { color: rgba(255,255,255,0.45); }
+    #search-count { font-size: 13px; color: #ccc; min-width: 46px; text-align: center; white-space: nowrap; }
+    /* 圆形图标按钮（翻页 / 关闭） */
+    #search-panel .sbtn {
+      width: 36px; height: 36px; flex-shrink: 0; border: none; border-radius: 50%;
+      background: rgba(255,255,255,0.12); color: #eee; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    #search-panel .sbtn:active { background: rgba(255,255,255,0.3); transform: scale(0.92); }
+    #search-panel .sbtn svg { width: 18px; height: 18px; display: block; }
+    #search-panel .sbtn-close { background: rgba(255,255,255,0.18); }
+    #search-panel .sbtn-close:active { background: rgba(255,90,90,0.55); }
+    #search-results {
+      position: absolute; top: 56px; left: 0; right: 0; max-height: 50%; overflow: auto;
+      background: #fff; color: #222; display: none; z-index: 30; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    #search-results.open { display: block; }
+    .search-res {
+      padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #eee; cursor: pointer;
+    }
+    .search-res:active { background: #eef3ff; }
+    .search-res .sn { color: #0a7aff; font-weight: bold; margin-right: 6px; }
+    .search-res mark { background: #ffe066; }
+    #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #ccc; font-size: 15px; z-index: 40; background: #525659; }
+    #toast {
+      position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.8); color: #fff; padding: 8px 16px; border-radius: 20px;
+      font-size: 13px; z-index: 50; display: none; white-space: nowrap;
+    }
+    /* 底部常驻页码胶囊（点击唤出工具栏） */
+    #status-bar {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 55; background: rgba(0,0,0,0.5); color: #fff; padding: 6px 16px;
+      border-radius: 18px; font-size: 13px; backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px); cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      transition: opacity .3s;
+    }
+    #status-bar .sb-page { font-weight: 500; }
+    #status-bar .sb-sep { opacity: 0.4; }
+    #status-bar .sb-zoom { opacity: 0.75; font-size: 12px; }
+    /* 工具栏右端下垂的小尾巴：工具栏收起时露在屏幕顶，点击唤出/收起；展开时随工具栏一体 */
+    #toolbar-handle {
+      position: absolute; right: 14px; top: 100%; margin-top: -1px;
+      height: 26px; padding: 0 14px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(38,38,40,0.78); color: #eee; font-size: 15px; line-height: 1;
+      border-radius: 0 0 14px 14px;
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.32);
+      cursor: pointer; user-select: none; transition: background .15s;
+    }
+    #toolbar-handle:active { background: rgba(255,255,255,0.22); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <button class="btn" id="btn-zoom-out">−</button>
+      <button class="btn" id="btn-zoom-in">＋</button>
+      <span id="page-indicator">1 / 1</span>
+      <input id="page-jump" type="number" min="1" placeholder="页" />
+      <button class="btn" id="btn-prev">‹</button>
+      <button class="btn" id="btn-next">›</button>
+      <span class="sep"></span>
+      <button class="btn" id="btn-rotate">↻</button>
+      <button class="btn" id="btn-mode">连续</button>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-toc">目录</button>
+      <button class="btn" id="btn-thumb">缩略图</button>
+      <button class="btn" id="btn-search">搜索</button>
+      <button class="btn btn-hide" id="btn-hide">⌄</button>
+      <div id="toolbar-handle">☰</div>
+    </div>
+    <div id="body">
+      <div id="scroll"><div id="pages"></div></div>
+
+      <div id="panel-left" class="overlay">
+        <h3>目录</h3>
+        <div id="outline-list"></div>
+      </div>
+
+      <div id="panel-right" class="overlay">
+        <h3>缩略图</h3>
+        <div id="thumb-list"></div>
+      </div>
+
+      <div id="search-panel">
+        <div class="s-field">
+          <span class="s-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <input id="search-input" type="text" placeholder="搜索文档内容" />
+        </div>
+        <span id="search-count"></span>
+        <button class="sbtn" id="btn-search-prev" aria-label="上一个"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
+        <button class="sbtn" id="btn-search-next" aria-label="下一个"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+        <button class="sbtn sbtn-close" id="btn-search-close" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div id="search-results"></div>
+
+      <div id="status-bar">
+        <span class="sb-page" id="sb-page">第 1 / 1 页</span>
+        <span class="sb-sep">|</span>
+        <span class="sb-zoom" id="sb-zoom">100%</span>
+      </div>
+
+      <div id="loading">正在打开文档…</div>
+      <div id="toast"></div>
+
+      <!-- 加密 PDF 密码输入弹窗 -->
+      <div id="pwd-overlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.55);z-index:70;align-items:center;justify-content:center;">
+        <div id="pwd-box" style="width:min(80%,320px);background:#fff;border-radius:14px;padding:22px 18px;box-shadow:0 8px 30px rgba(0,0,0,0.35);">
+          <div id="pwd-title" style="font-size:16px;font-weight:600;color:#1a1a1a;margin-bottom:6px;">请输入打开密码</div>
+          <div id="pwd-hint" style="font-size:13px;color:#666;margin-bottom:14px;">该 PDF 已加密，需要密码才能查看</div>
+          <input id="pwd-input" type="password" placeholder="密码" style="width:100%;padding:11px 12px;font-size:15px;border:1px solid #ddd;border-radius:10px;outline:none;box-sizing:border-box;" />
+          <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+            <button id="pwd-cancel" style="padding:9px 16px;font-size:14px;color:#555;background:#f2f2f2;border:none;border-radius:9px;">取消</button>
+            <button id="pwd-confirm" style="padding:9px 16px;font-size:14px;color:#fff;background:#0a7aff;border:none;border-radius:9px;">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/pdf.min.js"></script>
+  <script src="../lib/pdf-lib.min.js"></script>
+  <script src="../lib/fontkit.umd.js"></script>
+  <script src="../js/bridge.js"></script>
+  <script src="./reader.js"></script>
+</body>
+</html>

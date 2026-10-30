@@ -1,0 +1,10 @@
+{
+  "modelVersion": "6.1.1",
+  "model": "5.0.0",
+  "version": "1.0.0",
+  "description": "图文匣 PDF 工具 APP",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.6"
+  }
+}
